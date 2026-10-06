@@ -19,10 +19,10 @@ Herdr inside Tern, drawn by Tern itself. Herdr keeps the agents and terminals ru
 List ssh targets in `~/.config/tern-herdr/machines`, one per line:
 
 ```
-ampere
+devbox
 ```
 
-Each target needs Herdr on its PATH. The sidebar shows a chip per machine; the tabs mirror covers every machine and prefixes remote tab names (`ampere: api`). API calls run `ssh HOST herdr …` and terminals run `ssh -t HOST herdr terminal attach …`, so an ssh `ControlMaster` in `~/.ssh/config` keeps polling fast. A machine that stops answering keeps its tabs until it comes back.
+Each target needs Herdr on its PATH. The sidebar shows a chip per machine; the tabs mirror covers every machine and prefixes remote tab names (`devbox: api`). API calls run `ssh HOST herdr …` and terminals run `ssh -t HOST herdr terminal attach …`, so an ssh `ControlMaster` in `~/.ssh/config` keeps polling fast. A machine that stops answering keeps its tabs until it comes back.
 
 ## Herdr keys
 
