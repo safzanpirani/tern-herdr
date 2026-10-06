@@ -1,31 +1,45 @@
--- Window half: polls Herdr, mirrors its tabs and panes as Tern tabs and splits, maps Herdr's
--- prefix keys onto Herdr API calls, and adds toasts, a status segment and the sidebar launcher.
+-- Window half: polls Herdr on each machine, mirrors its tabs and panes as Tern tabs and splits,
+-- maps Herdr's prefix keys onto Herdr API calls, and adds toasts, a status segment and the sidebar.
 
 local common = require("./common")
 local keymap = require("./keymap")
 
 local POLL_MS = 2000
 local SIDEBAR_RATIO = 0.17
+local STRIP_ROWS = 3 -- Tern's smallest block height
 
-type Workspace = { id: string, label: string, number: number, status: string, active_tab: string? }
-type Tab = { id: string, workspace_id: string, label: string, number: number, status: string }
-type Pane = { id: string, terminal_id: string, tab_id: string, workspace_id: string, cwd: string }
+type Snapshot = common.Snapshot
+type Pane = common.Pane
+type Tab = common.Tab
+type Workspace = common.Workspace
 
--- The latest Herdr snapshot.
-local workspaces: { Workspace } = {} -- by number
-local tabs: { Tab } = {} -- by workspace number, then tab number
-local panes: { [string]: Pane } = {}
-local agents: { common.Agent } = {} -- by urgency
-local reachable = false
-
-local last: { [string]: string }? = nil -- pane_id -> agent status from the previous poll
+local machines = common.machines()
+local snaps: { [string]: Snapshot } = {} -- latest snapshot per machine
+local last: { [string]: string }? = nil -- "machine|pane" -> agent status from the previous poll
 local summary = "" -- counts string; a change refreshes the chrome
 
----------------------------------------------------------------------------------------------------
--- Snapshot
+local function all_agents(): { common.Agent }
+	local out = {}
+	for _, m in machines do
+		local snap = snaps[m]
+		if snap then
+			for _, a in snap.agents do
+				table.insert(out, a)
+			end
+		end
+	end
+	common.sort(out)
+	return out
+end
 
-local function workspace_of(id: string): Workspace?
-	for _, w in workspaces do
+local function pane_by_key(key: string): Pane?
+	local machine, id = string.match(key, "^(.-)|(.+)$")
+	local snap = machine and snaps[machine]
+	return snap and snap.panes[id] or nil
+end
+
+local function workspace_of(snap: Snapshot, id: string): Workspace?
+	for _, w in snap.workspaces do
 		if w.id == id then
 			return w
 		end
@@ -33,112 +47,11 @@ local function workspace_of(id: string): Workspace?
 	return nil
 end
 
-local function tabs_of(workspace_id: string): { Tab }
-	local out = {}
-	for _, t in tabs do
-		if t.workspace_id == workspace_id then
-			table.insert(out, t)
-		end
-	end
-	return out
-end
-
-local function panes_of(tab_id: string): { Pane }
-	local out = {}
-	for _, p in panes do
-		if p.tab_id == tab_id then
-			table.insert(out, p)
-		end
-	end
-	table.sort(out, function(a, b)
-		return a.id < b.id
-	end)
-	return out
-end
-
-local function apply(ws: any, ts: any, ps: any)
-	workspaces = {}
-	for _, w in ws do
-		table.insert(workspaces, {
-			id = w.workspace_id,
-			label = w.label or w.workspace_id,
-			number = w.number or 0,
-			status = w.agent_status or "idle",
-			active_tab = w.active_tab_id,
-		})
-	end
-	table.sort(workspaces, function(a, b)
-		return a.number < b.number
-	end)
-	local order = {}
-	for i, w in workspaces do
-		order[w.id] = i
-	end
-	tabs = {}
-	for _, t in ts do
-		table.insert(tabs, {
-			id = t.tab_id,
-			workspace_id = t.workspace_id,
-			label = t.label or tostring(t.number),
-			number = t.number or 0,
-			status = t.agent_status or "idle",
-		})
-	end
-	table.sort(tabs, function(a, b)
-		local oa, ob = order[a.workspace_id] or 999, order[b.workspace_id] or 999
-		if oa ~= ob then
-			return oa < ob
-		end
-		return a.number < b.number
-	end)
-	panes = {}
-	for _, p in ps do
-		panes[p.pane_id] = {
-			id = p.pane_id,
-			terminal_id = p.terminal_id or "",
-			tab_id = p.tab_id or "",
-			workspace_id = p.workspace_id or "",
-			cwd = p.foreground_cwd or p.cwd or "",
-		}
-	end
-	agents = common.agents_from(ps)
-end
-
--- Reads workspaces, tabs and panes, then calls `done` with a fresh window cx.
-local function snapshot(done: (WindowCx?) -> ())
-	local results: { [string]: any } = {}
-	local got, failed = 0, false
-	local function one(argv: { string }, field: string)
-		tern.process.run(argv, { timeout_ms = 5000 }, function(res, cx)
-			local value = common.decode(res, field)
-			if value then
-				results[field] = value
-			else
-				failed = true
-			end
-			got += 1
-			if got < 3 then
-				return
-			end
-			reachable = not failed
-			if reachable then
-				apply(results.workspaces, results.tabs, results.panes)
-			else
-				agents = {}
-			end
-			done(cx)
-		end)
-	end
-	one({ common.herdr, "workspace", "list" }, "workspaces")
-	one({ common.herdr, "tab", "list" }, "tabs")
-	one({ common.herdr, "pane", "list" }, "panes")
-end
-
 ---------------------------------------------------------------------------------------------------
 -- Toasts and status
 
 local function urgent(): common.Agent?
-	for _, a in agents do
+	for _, a in all_agents() do
 		if a.status == "blocked" or a.status == "done" then
 			return a
 		end
@@ -150,7 +63,7 @@ local function notify(cx: WindowCx, a: common.Agent, before: string?)
 	if before == a.status then
 		return
 	end
-	local where = common.basename(a.cwd)
+	local where = common.basename(a.cwd) .. (a.machine ~= "local" and (" on " .. a.machine) or "")
 	if a.status == "blocked" then
 		cx:toast("error", a.agent .. " needs input · " .. where, common.label(a))
 	elseif a.status == "done" and before == "working" then
@@ -159,12 +72,14 @@ local function notify(cx: WindowCx, a: common.Agent, before: string?)
 end
 
 local function after_poll(cx: WindowCx?)
+	local agents = all_agents()
 	local now = {}
 	for _, a in agents do
-		now[a.pane_id] = a.status
+		local key = a.machine .. "|" .. a.pane_id
+		now[key] = a.status
 		-- The first poll only records states; toasts start from the second.
 		if last and cx then
-			notify(cx, a, last[a.pane_id])
+			notify(cx, a, last[key])
 		end
 	end
 	last = now
@@ -177,7 +92,8 @@ local function after_poll(cx: WindowCx?)
 end
 
 tern.chrome.status(function(_pane)
-	if not reachable or #agents == 0 then
+	local agents = all_agents()
+	if #agents == 0 then
 		return nil
 	end
 	local c = common.counts(agents)
@@ -195,12 +111,13 @@ tern.chrome.status(function(_pane)
 end)
 
 tern.carly.context(function(_cx)
-	if not reachable or #agents == 0 then
+	local agents = all_agents()
+	if #agents == 0 then
 		return nil
 	end
 	local lines = {}
 	for _, a in agents do
-		table.insert(lines, string.format("%s %s %s (%s)", a.pane_id, a.agent, a.status, common.label(a)))
+		table.insert(lines, string.format("%s:%s %s %s (%s)", a.machine, a.pane_id, a.agent, a.status, common.label(a)))
 		if #lines >= 8 then
 			break
 		end
@@ -209,7 +126,7 @@ tern.carly.context(function(_cx)
 end)
 
 ---------------------------------------------------------------------------------------------------
--- Sidebar tab: the native sidebar beside one terminal that follows the picked agent.
+-- Sidebar tab: the native sidebar, the tab strip and one terminal that follows the picked pane.
 
 -- The sidebar tab open in this window: its link id, sidebar pane and terminal pane.
 local function sidebar_link(cx: WindowCx): (string?, number?, number?)
@@ -228,11 +145,33 @@ local function sidebar_link(cx: WindowCx): (string?, number?, number?)
 	return nil, nil, nil
 end
 
-local function open_sidebar(cx: WindowCx, terminal_id: string?)
+-- Shrinks the tab strip above `term` to STRIP_ROWS once Tern reports its size.
+local function fit_strip(strip: number)
+	tern.timer(300, function(cx)
+		tern.process.run({ common.tern, "ls", "--json" }, { timeout_ms = 5000 }, function(res, cx2)
+			local c = cx2 or cx
+			local ok, doc = pcall(tern.json.decode, res.stdout)
+			if not c or not ok or type(doc) ~= "table" then
+				return
+			end
+			for _, session in doc.sessions or {} do
+				for _, t in session.tabs or {} do
+					for _, b in t.blocks or {} do
+						if b.id == strip and type(b.rows) == "number" and b.rows > STRIP_ROWS then
+							c.layout:resize(strip, "down", STRIP_ROWS - b.rows)
+						end
+					end
+				end
+			end
+		end)
+	end)
+end
+
+local function open_sidebar(cx: WindowCx, machine: string?, terminal_id: string?)
 	local link, sidebar, term = sidebar_link(cx)
 	if link and sidebar then
-		if terminal_id then
-			common.retarget(link, term, terminal_id, function(pane, text)
+		if machine and terminal_id then
+			common.retarget(link, term, machine, terminal_id, function(pane, text)
 				cx:run(pane, text)
 			end)
 		end
@@ -240,13 +179,26 @@ local function open_sidebar(cx: WindowCx, terminal_id: string?)
 		return
 	end
 	link = common.new_link()
-	tern.fs.write(common.target_file(link), terminal_id or (agents[1] and agents[1].terminal_id) or "")
+	if not (machine and terminal_id) then
+		local a = all_agents()[1]
+		if a then
+			machine, terminal_id = a.machine, a.terminal_id
+		end
+	end
+	if machine and terminal_id then
+		tern.fs.write(common.target_file(link), common.encode_target(machine, terminal_id))
+	end
 	local tab, err = cx.layout:tab({
 		name = "herdr",
 		split = "right",
 		ratio = SIDEBAR_RATIO,
-		{ launch = { block = "herdr.sidebar", args = { link } } },
-		{ launch = { command = common.follow_command(link) } },
+		{ launch = { block = "herdr.sidebar", args = { link, machine or "local" } } },
+		{
+			split = "down",
+			ratio = 0.04,
+			{ launch = { block = "herdr.tabs", args = { link } } },
+			{ launch = { command = common.follow_command(link) } },
+		},
 	})
 	if not tab then
 		cx:toast("error", "Could not open the Herdr tab", err)
@@ -254,23 +206,27 @@ local function open_sidebar(cx: WindowCx, terminal_id: string?)
 	end
 	local layout = cx.session:layout(tab)
 	local right = layout and layout.root and layout.root[2]
-	if right and right.pane then
-		tern.kv.set("link:" .. link, right.pane)
-		cx.layout:focus(right.pane)
+	local strip, terminal = right and right[1] and right[1].pane, right and right[2] and right[2].pane
+	if terminal then
+		tern.kv.set("link:" .. link, terminal)
+		cx.layout:focus(terminal)
+	end
+	if strip then
+		fit_strip(strip)
 	end
 end
 
 ---------------------------------------------------------------------------------------------------
 -- Mirror: each Herdr tab is a Tern tab and each Herdr pane a Tern split attached to it.
--- kv "mirror" maps a Herdr pane id to the Tern pane attached to it; absent means off.
+-- kv "mirror" maps "machine|pane" to the Tern pane attached to it; absent means off.
 
 local TAB_COLOR: { [string]: TabColor } = { blocked = "red", working = "yellow", done = "green" }
 local applied: { [number]: string } = {} -- Tern tab -> name this plugin last set
 local renamed: { [number]: boolean } = {} -- Tern tabs the user renamed; their names stay
 local colors: { [number]: string } = {} -- Tern tab -> color this plugin last set
 local dismissed: { [string]: boolean } = {} -- Herdr panes whose Tern pane the user closed
-local pending_dir: { [string]: Dir } = {} -- new Herdr pane -> split direction asked for
-local pending_focus: string? = nil -- Herdr pane to focus once it is mirrored
+local pending_dir: { [string]: Dir } = {} -- new Herdr pane key -> split direction asked for
+local pending_focus: string? = nil -- Herdr pane key to focus once it is mirrored
 
 local function mirror_on(): boolean
 	return tern.kv.get("mirror") ~= nil
@@ -280,17 +236,20 @@ local function mirror_map(): { [string]: number }
 	return tern.kv.get("mirror") or {}
 end
 
-local function pane_link(pane_id: string): string
-	return "m-" .. string.gsub(pane_id, "[^%w]", "_")
+local function pane_link(key: string): string
+	return "m-" .. string.gsub(key, "[^%w]", "_")
 end
 
-local function tab_name(t: Tab): string
-	local w = workspace_of(t.workspace_id)
-	local space = w and w.label or t.workspace_id
-	if #tabs_of(t.workspace_id) > 1 then
-		return space .. " · " .. t.label
+local function tab_name(snap: Snapshot, t: Tab): string
+	local w = workspace_of(snap, t.workspace_id)
+	local name = w and w.label or t.workspace_id
+	if #common.tabs_of(snap, t.workspace_id) > 1 then
+		name ..= " · " .. t.label
 	end
-	return space
+	if snap.machine ~= "local" then
+		name = snap.machine .. ": " .. name
+	end
+	return name
 end
 
 local function tern_tab_info(cx: WindowCx, tab: number): TabInfo?
@@ -311,77 +270,87 @@ local function sync_mirror(cx: WindowCx)
 	local was_focused = cx.session:focused()
 	local created = false
 
-	for _, t in tabs do
-		local anchor: number? = nil
-		for _, p in panes_of(t.id) do
-			local term = map[p.id]
-			if term and cx.session:pane(term) == nil then
-				-- The user closed it in Tern: leave it hidden; Herdr keeps the pane.
-				map[p.id] = nil
-				dismissed[p.id] = true
-				term = nil
-			end
-			if term then
-				anchor = anchor or term
-			end
-		end
-		for _, p in panes_of(t.id) do
-			if not map[p.id] and not dismissed[p.id] and p.terminal_id ~= "" then
-				local link = pane_link(p.id)
-				tern.fs.write(common.target_file(link), p.terminal_id)
-				local launch = { cwd = p.cwd, command = common.follow_command(link) }
-				local term
-				if anchor then
-					term = cx.layout:split(anchor, pending_dir[p.id] or "right", launch, { focus = false })
-				else
-					term = cx.layout:new_tab(launch, { focus = false })
-					local tab = term and cx.session:tab_of(term)
-					local after = prev_tab and tern_tab_info(cx, prev_tab)
-					if tab and after then
-						cx.layout:order_tab(tab, after.position + 1)
+	for _, machine in machines do
+		local snap = snaps[machine]
+		if snap and not snap.err then
+			for _, t in snap.tabs do
+				local anchor: number? = nil
+				for _, p in common.panes_of(snap, t.id) do
+					local term = map[p.key]
+					if term and cx.session:pane(term) == nil then
+						-- The user closed it in Tern: leave it hidden; Herdr keeps the pane.
+						map[p.key] = nil
+						dismissed[p.key] = true
+						term = nil
+					end
+					if term then
+						anchor = anchor or term
 					end
 				end
-				pending_dir[p.id] = nil
-				if term then
-					created = true
-					map[p.id] = term
-					anchor = anchor or term
+				for _, p in common.panes_of(snap, t.id) do
+					if not map[p.key] and not dismissed[p.key] and p.terminal_id ~= "" then
+						local link = pane_link(p.key)
+						tern.fs.write(common.target_file(link), common.encode_target(machine, p.terminal_id))
+						local launch = { command = common.follow_command(link) }
+						if machine == "local" then
+							launch.cwd = p.cwd
+						end
+						local term
+						if anchor then
+							term = cx.layout:split(anchor, pending_dir[p.key] or "right", launch, { focus = false })
+						else
+							term = cx.layout:new_tab(launch, { focus = false })
+							local tab = term and cx.session:tab_of(term)
+							local after = prev_tab and tern_tab_info(cx, prev_tab)
+							if tab and after then
+								cx.layout:order_tab(tab, after.position + 1)
+							end
+						end
+						pending_dir[p.key] = nil
+						if term then
+							created = true
+							map[p.key] = term
+							anchor = anchor or term
+						end
+					end
 				end
-			end
-		end
-		local tab = anchor and cx.session:tab_of(anchor)
-		if tab then
-			prev_tab = tab
-			local info = tern_tab_info(cx, tab)
-			-- A name this plugin didn't set means the user renamed the tab; keep theirs.
-			if info and applied[tab] and info.name ~= applied[tab] then
-				renamed[tab] = true
-			end
-			local name = tab_name(t)
-			if not renamed[tab] and applied[tab] ~= name then
-				applied[tab] = name
-				cx.layout:name_tab(tab, name)
-			end
-			local color = TAB_COLOR[t.status]
-			if colors[tab] ~= (color or "") then
-				colors[tab] = color or ""
-				cx.layout:color_tab(tab, color)
+				local tab = anchor and cx.session:tab_of(anchor)
+				if tab then
+					prev_tab = tab
+					local info = tern_tab_info(cx, tab)
+					-- A name this plugin didn't set means the user renamed the tab; keep theirs.
+					if info and applied[tab] and info.name ~= applied[tab] then
+						renamed[tab] = true
+					end
+					local name = tab_name(snap, t)
+					if not renamed[tab] and applied[tab] ~= name then
+						applied[tab] = name
+						cx.layout:name_tab(tab, name)
+					end
+					local color = TAB_COLOR[t.status]
+					if colors[tab] ~= (color or "") then
+						colors[tab] = color or ""
+						cx.layout:color_tab(tab, color)
+					end
+				end
 			end
 		end
 	end
 
-	-- Panes that left Herdr take their Tern panes with them.
-	for pane_id, term in map do
-		if not panes[pane_id] then
+	-- Panes that left Herdr take their Tern panes with them. An unreachable machine keeps its tabs.
+	for key, term in map do
+		local machine = string.match(key, "^(.-)|")
+		local snap = machine and snaps[machine]
+		if snap and not snap.err and not pane_by_key(key) then
 			if cx.session:pane(term) then
 				cx.layout:close(term)
 			end
-			map[pane_id] = nil
+			map[key] = nil
 		end
 	end
-	for pane_id in dismissed do
-		if not panes[pane_id] then
-			dismissed[pane_id] = nil
+	for key in dismissed do
+		if not pane_by_key(key) then
+			dismissed[key] = nil
 		end
 	end
 	tern.kv.set("mirror", map)
@@ -402,31 +371,62 @@ local function stop_mirror(cx: WindowCx)
 		end
 	end
 	tern.kv.set("mirror", nil)
+	tern.kv.set("mirror_stop", nil)
 	applied, renamed, colors, dismissed = {}, {}, {}, {}
 end
 
 ---------------------------------------------------------------------------------------------------
 -- Polling
 
-local function poll()
-	snapshot(function(cx)
-		after_poll(cx)
-		if reachable and cx then
-			sync_mirror(cx)
+-- Snapshots every machine, then runs `done` once with the last callback's cx.
+local function snapshot_all(done: (WindowCx?) -> ())
+	local pending = #machines
+	local cx_seen: WindowCx? = nil
+	for _, machine in machines do
+		common.snapshot(machine, function(snap, cx)
+			snaps[machine] = snap
+			cx_seen = cx or cx_seen
+			pending -= 1
+			if pending == 0 then
+				done(cx_seen)
+			end
+		end)
+	end
+end
+
+local fitted: { [number]: number } = {} -- tab strip pane -> fit attempts
+
+local function settle(cx: WindowCx?)
+	if not cx then
+		return
+	end
+	-- Sizes are bogus (80x24) until Tern shows the pane, so keep fitting strips for a while.
+	for _, p in cx.session:panes() do
+		if p.block == "herdr.tabs" and (fitted[p.pane] or 0) < 5 then
+			fitted[p.pane] = (fitted[p.pane] or 0) + 1
+			fit_strip(p.pane)
 		end
+	end
+	-- The sidebar menu asks for the mirror through kv.
+	if tern.kv.get("mirror_stop") then
+		stop_mirror(cx)
+	end
+	sync_mirror(cx)
+end
+
+local function poll()
+	snapshot_all(function(cx)
+		after_poll(cx)
+		settle(cx)
 		tern.timer(POLL_MS, function()
 			poll()
 		end)
 	end)
 end
 
--- Refreshes the snapshot now (after a Herdr change), then syncs.
+-- Refreshes now (after a Herdr change), then syncs.
 local function refresh_now()
-	snapshot(function(cx)
-		if reachable and cx then
-			sync_mirror(cx)
-		end
-	end)
+	snapshot_all(settle)
 end
 
 ---------------------------------------------------------------------------------------------------
@@ -438,48 +438,41 @@ local function current(cx: WindowCx): Pane?
 	if not focused then
 		return nil
 	end
-	for pane_id, term in mirror_map() do
+	for key, term in mirror_map() do
 		if term == focused then
-			return panes[pane_id]
+			return pane_by_key(key)
 		end
 	end
 	local link, sidebar, term = sidebar_link(cx)
 	if link and (focused == sidebar or focused == term) then
-		local terminal_id = common.link_target(link)
-		for _, p in panes do
-			if p.terminal_id == terminal_id then
-				return p
-			end
-		end
+		local machine, terminal = common.link_target(link)
+		local snap = machine and snaps[machine]
+		return snap and terminal and common.pane_by_terminal(snap, terminal) or nil
 	end
 	return nil
 end
 
 -- Shows a Herdr pane: its mirrored Tern pane, else the sidebar terminal.
 local function show(cx: WindowCx, p: Pane)
-	local term = mirror_on() and mirror_map()[p.id]
+	local term = mirror_on() and mirror_map()[p.key]
 	if term and cx.session:pane(term) then
 		cx.layout:focus(term)
 	elseif mirror_on() then
-		pending_focus = p.id
-		dismissed[p.id] = nil
+		pending_focus = p.key
+		dismissed[p.key] = nil
 		refresh_now()
 	else
-		open_sidebar(cx, p.terminal_id)
+		open_sidebar(cx, p.machine, p.terminal_id)
 	end
 end
 
-local function herdr(cx: WindowCx, argv: { string }, done: ((any) -> ())?)
-	local full = { common.herdr }
-	for _, a in argv do
-		table.insert(full, a)
-	end
-	tern.process.run(full, { timeout_ms = 10000 }, function(res, cx2)
+local function herdr(cx: WindowCx, machine: string, args: { string }, done: ((any) -> ())?)
+	tern.process.run(common.argv(machine, args), { timeout_ms = 10000 }, function(res, cx2)
 		local c = cx2 or cx
 		local ok, doc = pcall(tern.json.decode, res.stdout)
 		if res.status ~= 0 or not ok or type(doc) ~= "table" or doc.error then
 			local msg = ok and type(doc) == "table" and doc.error and doc.error.message or (res.stderr .. res.stdout)
-			c:toast("error", "herdr " .. argv[1] .. " " .. (argv[2] or "") .. " failed", tostring(msg))
+			c:toast("error", "herdr " .. args[1] .. " " .. (args[2] or "") .. " failed", tostring(msg))
 			return
 		end
 		if done then
@@ -490,17 +483,18 @@ local function herdr(cx: WindowCx, argv: { string }, done: ((any) -> ())?)
 end
 
 -- Opens a newly created Herdr pane once it is mirrored (or in the sidebar terminal).
-local function reveal_new(cx: WindowCx, pane: any, dir: Dir?)
+local function reveal_new(cx: WindowCx, machine: string, pane: any, dir: Dir?)
 	if type(pane) ~= "table" or not pane.pane_id then
 		return
 	end
+	local key = machine .. "|" .. pane.pane_id
 	if dir then
-		pending_dir[pane.pane_id] = dir
+		pending_dir[key] = dir
 	end
 	if mirror_on() then
-		pending_focus = pane.pane_id
+		pending_focus = key
 	elseif pane.terminal_id then
-		open_sidebar(cx, pane.terminal_id)
+		open_sidebar(cx, machine, pane.terminal_id)
 	end
 end
 
@@ -520,30 +514,30 @@ local function index_of(list: { any }, pred: (any) -> boolean): number
 	return 1
 end
 
--- The first pane of a Herdr tab.
-local function tab_pane(t: Tab?): Pane?
-	return t and panes_of(t.id)[1]
+local function tab_pane(snap: Snapshot?, t: Tab?): Pane?
+	return snap and t and common.panes_of(snap, t.id)[1] or nil
 end
 
-local function workspace_pane(w: Workspace?): Pane?
-	if not w then
+local function workspace_pane(snap: Snapshot?, w: Workspace?): Pane?
+	if not snap or not w then
 		return nil
 	end
-	for _, t in tabs_of(w.id) do
+	local tabs = common.tabs_of(snap, w.id)
+	for _, t in tabs do
 		if t.id == w.active_tab then
-			return tab_pane(t)
+			return tab_pane(snap, t)
 		end
 	end
-	return tab_pane(tabs_of(w.id)[1])
+	return tab_pane(snap, tabs[1])
 end
 
--- Agents in space order, as Herdr's next/previous agent cycles them.
-local function agents_by_space(): { common.Agent }
+-- Agents of one machine in space order, as Herdr's next/previous agent cycles them.
+local function agents_by_space(snap: Snapshot): { common.Agent }
 	local order = {}
-	for i, w in workspaces do
+	for i, w in snap.workspaces do
 		order[w.id] = i
 	end
-	local list = table.clone(agents)
+	local list = table.clone(snap.agents)
 	table.sort(list, function(a, b)
 		local oa, ob = order[a.workspace_id] or 999, order[b.workspace_id] or 999
 		if oa ~= ob then
@@ -564,7 +558,6 @@ local function focus_dir(cx: WindowCx, dir: Dir)
 	end
 	local axis = (dir == "left" or dir == "right") and "right" or "down"
 	local forward = dir == "right" or dir == "down"
-	-- Path from the root to the focused leaf.
 	local path = {}
 	local function find(node: TabTree): boolean
 		if node.pane == focused then
@@ -610,131 +603,122 @@ tern.on("focus", function(ev: FocusEvent, _cx)
 	end
 end)
 
-local function append(argv: { string }, extra: { string }): { string }
-	for _, a in extra do
-		table.insert(argv, a)
+local function within(cx: WindowCx, p: Pane?, list_of: (Snapshot, Pane) -> { any }, match: (any, Pane) -> boolean, by: number, pane_of: (Snapshot, any) -> Pane?)
+	local snap = p and snaps[p.machine]
+	if not p or not snap then
+		return
 	end
-	return argv
+	local list = list_of(snap, p)
+	local target = pane_of(snap, step(list, index_of(list, function(v)
+		return match(v, p)
+	end), by))
+	if target then
+		show(cx, target)
+	end
+end
+
+local function space_tabs(snap: Snapshot, p: Pane): { any }
+	return common.tabs_of(snap, p.workspace_id)
+end
+local function same_tab(t: any, p: Pane): boolean
+	return t.id == p.tab_id
+end
+local function spaces(snap: Snapshot, _p: Pane): { any }
+	return snap.workspaces
+end
+local function same_space(w: any, p: Pane): boolean
+	return w.id == p.workspace_id
+end
+local function agent_list(snap: Snapshot, _p: Pane): { any }
+	return agents_by_space(snap)
+end
+local function same_agent(a: any, p: Pane): boolean
+	return a.pane_id == p.id
+end
+local function agent_pane(snap: Snapshot, a: any): Pane?
+	return a and snap.panes[a.pane_id] or nil
 end
 
 -- Handlers by Herdr action name. `n` is the 1-based index of indexed bindings.
 local ACTIONS: { [string]: (cx: WindowCx, p: Pane?, n: number?) -> () } = {
 	new_tab = function(cx, p)
-		local argv = { "tab", "create", "--no-focus" }
 		if p then
-			append(argv, { "--workspace", p.workspace_id, "--cwd", p.cwd })
+			herdr(cx, p.machine, { "tab", "create", "--no-focus", "--workspace", p.workspace_id, "--cwd", p.cwd }, function(r)
+				reveal_new(cx, p.machine, r.root_pane)
+			end)
 		end
-		herdr(cx, argv, function(r)
-			reveal_new(cx, r.root_pane)
-		end)
 	end,
 	new_workspace = function(cx, p)
-		local argv = { "workspace", "create", "--no-focus" }
+		local machine = p and p.machine or "local"
+		local args = { "workspace", "create", "--no-focus" }
 		if p then
-			append(argv, { "--cwd", p.cwd })
+			table.insert(args, "--cwd")
+			table.insert(args, p.cwd)
 		end
-		herdr(cx, argv, function(r)
-			reveal_new(cx, r.root_pane)
+		herdr(cx, machine, args, function(r)
+			reveal_new(cx, machine, r.root_pane)
 		end)
 	end,
 	split_vertical = function(cx, p)
 		if p then
-			herdr(cx, { "pane", "split", p.id, "--direction", "right", "--cwd", p.cwd, "--no-focus" }, function(r)
-				reveal_new(cx, r.pane, "right")
+			herdr(cx, p.machine, { "pane", "split", p.id, "--direction", "right", "--cwd", p.cwd, "--no-focus" }, function(r)
+				reveal_new(cx, p.machine, r.pane, "right")
 			end)
 		end
 	end,
 	split_horizontal = function(cx, p)
 		if p then
-			herdr(cx, { "pane", "split", p.id, "--direction", "down", "--cwd", p.cwd, "--no-focus" }, function(r)
-				reveal_new(cx, r.pane, "down")
+			herdr(cx, p.machine, { "pane", "split", p.id, "--direction", "down", "--cwd", p.cwd, "--no-focus" }, function(r)
+				reveal_new(cx, p.machine, r.pane, "down")
 			end)
 		end
 	end,
 	close_pane = function(cx, p)
 		if p then
-			herdr(cx, { "pane", "close", p.id })
+			herdr(cx, p.machine, { "pane", "close", p.id })
 		end
 	end,
 	close_tab = function(cx, p)
 		if p then
-			herdr(cx, { "tab", "close", p.tab_id })
+			herdr(cx, p.machine, { "tab", "close", p.tab_id })
 		end
 	end,
 	close_workspace = function(cx, p)
 		if p then
-			herdr(cx, { "workspace", "close", p.workspace_id })
+			herdr(cx, p.machine, { "workspace", "close", p.workspace_id })
 		end
 	end,
 	next_tab = function(cx, p)
-		if p then
-			local list = tabs_of(p.workspace_id)
-			local target = tab_pane(step(list, index_of(list, function(t)
-				return t.id == p.tab_id
-			end), 1))
-			if target then
-				show(cx, target)
-			end
-		end
+		within(cx, p, space_tabs, same_tab, 1, tab_pane)
 	end,
 	previous_tab = function(cx, p)
-		if p then
-			local list = tabs_of(p.workspace_id)
-			local target = tab_pane(step(list, index_of(list, function(t)
-				return t.id == p.tab_id
-			end), -1))
-			if target then
-				show(cx, target)
-			end
-		end
+		within(cx, p, space_tabs, same_tab, -1, tab_pane)
 	end,
 	switch_tab = function(cx, p, n)
-		local target = p and n and tab_pane(tabs_of(p.workspace_id)[n])
+		local snap = p and snaps[p.machine]
+		local target = snap and p and n and tab_pane(snap, common.tabs_of(snap, p.workspace_id)[n])
 		if target then
 			show(cx, target)
 		end
 	end,
 	next_workspace = function(cx, p)
-		local i = index_of(workspaces, function(w)
-			return p ~= nil and w.id == p.workspace_id
-		end)
-		local target = workspace_pane(step(workspaces, i, 1))
-		if target then
-			show(cx, target)
-		end
+		within(cx, p, spaces, same_space, 1, workspace_pane)
 	end,
 	previous_workspace = function(cx, p)
-		local i = index_of(workspaces, function(w)
-			return p ~= nil and w.id == p.workspace_id
-		end)
-		local target = workspace_pane(step(workspaces, i, -1))
-		if target then
-			show(cx, target)
-		end
+		within(cx, p, spaces, same_space, -1, workspace_pane)
 	end,
-	switch_workspace = function(cx, _p, n)
-		local target = n and workspace_pane(workspaces[n])
+	switch_workspace = function(cx, p, n)
+		local snap = snaps[p and p.machine or "local"]
+		local target = snap and n and workspace_pane(snap, snap.workspaces[n])
 		if target then
 			show(cx, target)
 		end
 	end,
 	next_agent = function(cx, p)
-		local list = agents_by_space()
-		local a = step(list, index_of(list, function(a)
-			return p ~= nil and a.pane_id == p.id
-		end), 1)
-		if a and panes[a.pane_id] then
-			show(cx, panes[a.pane_id])
-		end
+		within(cx, p, agent_list, same_agent, 1, agent_pane)
 	end,
 	previous_agent = function(cx, p)
-		local list = agents_by_space()
-		local a = step(list, index_of(list, function(a)
-			return p ~= nil and a.pane_id == p.id
-		end), -1)
-		if a and panes[a.pane_id] then
-			show(cx, panes[a.pane_id])
-		end
+		within(cx, p, agent_list, same_agent, -1, agent_pane)
 	end,
 	focus_pane_left = function(cx)
 		focus_dir(cx, "left")
@@ -767,13 +751,13 @@ local ACTIONS: { [string]: (cx: WindowCx, p: Pane?, n: number?) -> () } = {
 		cx:action("rename_tab")
 	end,
 	workspace_picker = function(cx, p)
-		open_sidebar(cx, p and p.terminal_id)
+		open_sidebar(cx, p and p.machine, p and p.terminal_id)
 	end,
 	goto = function(cx, p)
-		open_sidebar(cx, p and p.terminal_id)
+		open_sidebar(cx, p and p.machine, p and p.terminal_id)
 	end,
 	toggle_sidebar = function(cx, p)
-		open_sidebar(cx, p and p.terminal_id)
+		open_sidebar(cx, p and p.machine, p and p.terminal_id)
 	end,
 	detach = function(cx)
 		stop_mirror(cx)
@@ -825,7 +809,7 @@ tern.command({
 	icon = "user",
 	keys = { "cmd+shift+h" },
 	run = function(cx)
-		open_sidebar(cx, nil)
+		open_sidebar(cx, nil, nil)
 	end,
 })
 
@@ -841,7 +825,7 @@ tern.command({
 		else
 			tern.kv.set("mirror", {})
 			sync_mirror(cx)
-			cx:toast("success", "Herdr tabs mirrored", #tabs .. " tabs")
+			cx:toast("success", "Herdr tabs mirrored")
 		end
 	end,
 })
@@ -853,8 +837,10 @@ tern.command({
 	keys = { "cmd+shift+j" },
 	run = function(cx)
 		local a = urgent()
-		if a and panes[a.pane_id] then
-			show(cx, panes[a.pane_id])
+		local snap = a and snaps[a.machine]
+		local p = snap and a and snap.panes[a.pane_id]
+		if p then
+			show(cx, p)
 		else
 			cx:toast("info", "No Herdr agent is blocked or done")
 		end
@@ -869,7 +855,7 @@ tern.chrome.tab_title(function(tab)
 	if program ~= "herdr" and not string.match(program, "/herdr$") then
 		return nil
 	end
-	local c = common.counts(agents)
+	local c = common.counts(all_agents())
 	if c.blocked then
 		return "herdr · " .. c.blocked .. " blocked"
 	end

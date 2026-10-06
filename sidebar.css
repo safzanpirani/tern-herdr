@@ -2,11 +2,65 @@
 .sf-main[data-surface='plugin.herdr.sidebar'] .hs {
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  height: 100%;
+  min-height: 0;
   padding: 6px 4px;
   font-family: var(--mono);
   font-size: 12px;
 }
+.hs .hs-spaces, .hs .hs-agents {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-height: 0;
+  overflow: auto;
+}
+.hs .hs-spaces { flex: 0 0 auto; }
+.hs .hs-agents { flex: 1 1 0; padding-top: 6px; }
+.hs .hs-spaces.hs-h10 { height: 10%; }
+.hs .hs-spaces.hs-h20 { height: 20%; }
+.hs .hs-spaces.hs-h30 { height: 30%; }
+.hs .hs-spaces.hs-h40 { height: 40%; }
+.hs .hs-spaces.hs-h50 { height: 50%; }
+.hs .hs-spaces.hs-h60 { height: 60%; }
+.hs .hs-spaces.hs-h70 { height: 70%; }
+.hs .hs-spaces.hs-h80 { height: 80%; }
+.hs .hs-spaces.hs-h90 { height: 90%; }
+.hs .hs-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--l2);
+  color: var(--t3);
+}
+.hs .hs-grow { flex: 1; }
+.hs .hs-btn { cursor: pointer; }
+.hs .hs-btn:hover { color: var(--t1); }
+.hs .hs-arrow { color: var(--t4); }
+.hs .hs-menu-btn.hs-attn::before { content: '● '; color: var(--accent); }
+.hs .hs-machines { display: flex; gap: 6px; padding: 0 8px 10px; flex-wrap: wrap; flex: none; }
+.hs .hs-chip { padding: 1px 8px; border-radius: 10px; color: var(--t3); cursor: pointer; box-shadow: inset 0 0 0 1px var(--l2); }
+.hs .hs-chip-on { color: var(--t1); background: var(--l2); }
+.hs .hs-menu {
+  flex: none;
+  margin: 6px 4px;
+  display: flex;
+  flex-direction: column;
+  padding: 4px;
+  border-radius: 8px;
+  background: var(--pop-bg, var(--card));
+  box-shadow: inset 0 0 0 1px var(--l2), 0 6px 24px rgba(0, 0, 0, 0.35);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.hs-menu .hs-mi { padding: 4px 8px; border-radius: 5px; color: var(--t2); cursor: pointer; }
+.hs-menu .hs-mi:hover { background: var(--l2); color: var(--t1); }
+.hs-menu .hs-danger { color: var(--bad); }
+.hs-menu .hs-attn { color: var(--accent); }
+.hs-menu .hs-mnote { padding: 2px 8px; color: var(--t4); }
+.hs-menu .hs-msep { height: 1px; margin: 4px 6px; background: var(--l2); }
 .hs .hs-head {
   display: flex;
   justify-content: space-between;
@@ -55,3 +109,35 @@
   color: var(--t4);
   font-size: 11px;
 }
+
+/* Tab strip above the sidebar's terminal: Herdr's "1 2 +". */
+.sf-main[data-surface='plugin.herdr.tabs'] .ht {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 4px;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.ht .ht-tab {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  min-width: 56px;
+  justify-content: center;
+  padding: 1px 12px;
+  border-radius: 4px;
+  color: var(--t3);
+  background: var(--l1);
+  cursor: pointer;
+}
+.ht .ht-tab:hover { color: var(--t1); }
+.ht .ht-on { color: var(--accent-ink, var(--t1)); background: color-mix(in srgb, var(--accent) 35%, transparent); }
+.ht .ht-new { min-width: 0; background: none; }
+.ht .hs-grow { flex: 1; }
+.ht .ht-machine { color: var(--t4); padding-right: 6px; }
+.ht .hs-dot { font-size: 9px; }
+.ht .hs-dot[data-state='blocked'] { color: var(--bad); }
+.ht .hs-dot[data-state='working'] { color: var(--warn); }
+.ht .hs-dot[data-state='done'] { color: var(--ok); }
+.ht .hs-dot[data-state='idle'], .ht .hs-dot[data-state='unknown'] { color: var(--t4); }

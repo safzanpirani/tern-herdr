@@ -6,7 +6,23 @@ Herdr inside Tern, drawn by Tern itself. Herdr keeps the agents and terminals ru
 
 **Tabs mirror** (`cmd+shift+m`, "Herdr: Toggle Tabs Mirror"). Every Herdr tab becomes a Tern tab and every Herdr pane a Tern split in it. Tabs are named after their space (`api`, `web · 2`) and colored by agent state: red is blocked, yellow is working, green is done. New Herdr tabs and panes appear within two seconds, and closed ones disappear. Closing a Tern tab only hides it; Herdr keeps the pane. Turning the mirror off closes the Tern tabs and leaves Herdr running.
 
-**Sidebar** (`cmd+shift+h`, "Herdr: Open Sidebar"). A `herdr` tab with a native rail on the left (spaces with git branches, then agents by priority) and one terminal on the right that follows the agent you click.
+**Sidebar** (`cmd+shift+h`, "Herdr: Open Sidebar"). A `herdr` tab with a native rail on the left and one terminal on the right that follows what you click.
+
+- The rail lists spaces with their git branches, then agents by priority. Click a space to show its most urgent agent (or its active tab), or click an agent.
+- The bar between the two sections has **new** (a new space), **▴ ▾** (move the agents section up or down; `[` and `]` do the same) and **menu** (new space, new tab, close space, integrations, machine, tabs mirror, refresh). Closing a space takes a second click.
+- As in Herdr, a dot on **menu** means the machine has agent integrations to install or update: an agent's command is on PATH but its Herdr integration is missing or outdated. The menu lists them; click one to run `herdr integration install` on that machine. The check runs about once a minute.
+- A tab strip above the terminal shows the space's Herdr tabs as `1 2 +`. Click a tab to show it, or `+` to create one. It is three rows tall, Tern's smallest block.
+- Keys in the rail: `↑`/`↓` select, `enter` shows, `n` new space, `m` menu, `r` refresh.
+
+## Remote machines
+
+List ssh targets in `~/.config/tern-herdr/machines`, one per line:
+
+```
+ampere
+```
+
+Each target needs Herdr on its PATH. The sidebar shows a chip per machine; the tabs mirror covers every machine and prefixes remote tab names (`ampere: api`). API calls run `ssh HOST herdr …` and terminals run `ssh -t HOST herdr terminal attach …`, so an ssh `ControlMaster` in `~/.ssh/config` keeps polling fast. A machine that stops answering keeps its tabs until it comes back.
 
 ## Herdr keys
 
@@ -35,10 +51,10 @@ Herdr settings, help, resize mode, scrollback editing and worktrees aren't mappe
 
 ## How it works
 
-- Each Tern pane runs `follow.sh`, which runs `herdr terminal attach <terminal_id>` for the terminal named in its target file under the plugin's data directory. To switch terminals, the plugin writes a new target and types `ctrl+b q`, which Herdr's direct attach always takes as detach. A failed attach is retried, because a hidden pane has no size yet and Herdr refuses a zero-sized grid.
-- `window.luau` polls `herdr workspace/tab/pane list` every 2 s. It mirrors tabs and panes, registers the key sequences and calls the Herdr CLI for each action.
+- Each Tern pane runs `follow.sh`, which attaches to the terminal named in its target file (`MACHINE TERMINAL_ID`) under the plugin's data directory: `herdr terminal attach` locally, or the same command over `ssh -t`. To switch terminals, the plugin writes a new target and types `ctrl+b q`, which Herdr's direct attach always takes as detach. A failed attach is retried, because a hidden pane has no size yet and Herdr refuses a zero-sized grid.
+- `window.luau` polls `herdr workspace/tab/pane list` on every machine every 2 s. It mirrors tabs and panes, registers the key sequences and calls the Herdr CLI for each action.
 - `keymap.luau` turns Herdr's key specs into Tern sequences. For example, `prefix+shift+1..9` becomes `ctrl+x>shift+1` and `ctrl+x>!`, because terminals report shifted keys either way.
-- `host.luau` is the sidebar block, styled by `sidebar.css`.
+- `host.luau` holds the sidebar and tab strip blocks, styled by `sidebar.css`.
 - `common.luau` finds the binaries, parses Herdr's JSON and holds the link helpers.
 
 Requires Herdr with `herdr terminal attach` and Tern with plugin support.
@@ -51,4 +67,4 @@ tern plugin install github.com/safzanpirani/tern-herdr
 
 Or clone it and run `tern plugin link .` to use it in place. Run `tern plugin types .` to write `tern.d.luau` for luau-lsp.
 
-The plugin talks to the default Herdr session on this machine.
+The plugin talks to the default Herdr session on each machine.

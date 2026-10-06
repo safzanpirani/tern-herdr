@@ -1,11 +1,12 @@
 #!/bin/sh
 # Keeps this pane attached to the Herdr terminal named in the target file.
-# The plugin writes a new terminal id and sends ctrl+b q; the attach ends and the loop picks up the new one.
-#   follow.sh TARGET_FILE [HERDR_BIN]
+# The target is "MACHINE TERMINAL_ID" (MACHINE is "local" or an ssh target). The plugin writes a
+# new target and sends ctrl+b q; the attach ends and the loop picks up the new one.
+#   follow.sh TARGET_FILE [LOCAL_HERDR_BIN]
 
 file="$1"
-herdr="${2:-herdr}"
-on="$file.on" # the terminal this pane is attached to right now, empty while waiting
+local_herdr="${2:-herdr}"
+on="$file.on" # the target this pane is attached to right now, empty while waiting
 
 : > "$on"
 waiting=""
@@ -17,20 +18,16 @@ while :; do
 		continue
 	fi
 	waiting=""
-	terminal="$target"
-	case "$target" in
-	term_*) ;;
-	*) # A pane id (w1:p2): look up its terminal.
-		terminal=$("$herdr" pane get "$target" 2>/dev/null | sed -n 's/.*"terminal_id":"\([^"]*\)".*/\1/p')
-		;;
-	esac
+	machine=${target% *}
+	terminal=${target##* }
+	[ "$machine" = "$target" ] && machine=local
 	printf '%s' "$target" > "$on"
-	if [ -n "$terminal" ]; then
-		"$herdr" terminal attach "$terminal"
-		status=$?
+	if [ "$machine" = local ]; then
+		"$local_herdr" terminal attach "$terminal"
 	else
-		status=1
+		ssh -t -o ConnectTimeout=8 "$machine" herdr terminal attach "$terminal"
 	fi
+	status=$?
 	: > "$on"
 	[ "$(cat "$file" 2>/dev/null)" = "$target" ] || { failures=0; continue; }
 	if [ "$status" -ne 0 ] && [ "$failures" -lt 5 ]; then
@@ -44,7 +41,7 @@ while :; do
 	waiting="$target"
 	printf '\033[2J\033[H'
 	if [ "$status" -ne 0 ]; then
-		printf 'herdr terminal attach %s failed (exit %s).\n' "$target" "$status"
+		printf 'Attaching to %s on %s failed (exit %s).\n' "$terminal" "$machine" "$status"
 	fi
 	printf 'Detached. Pick a pane in the Herdr sidebar, or close this block.\n'
 done
