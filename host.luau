@@ -378,6 +378,19 @@ local function space_rows(state: SidebarState): { Node }
 			table.insert(children, el("div", "hs-sub", branch))
 		end
 		table.insert(rows, el("div", "hs-row" .. (on and " hs-on" or ""), nil, children, "space=" .. w.id))
+		if on then
+			-- The shown space's Herdr tabs, "1 2 +", one line under it.
+			local p = common.pane_by_terminal(snap, terminal :: string)
+			local chips = {}
+			for _, t in common.tabs_of(snap, w.id) do
+				table.insert(chips, el("span", "hs-tab" .. (p and t.id == p.tab_id and " hs-tab-on" or ""), nil, {
+					dot(t.status),
+					el("span", "", t.label),
+				}, "tab=" .. t.id))
+			end
+			table.insert(chips, el("span", "hs-tab hs-tab-new", "+", nil, "new_tab"))
+			table.insert(rows, el("div", "hs-tabs", nil, chips))
+		end
 	end
 	return rows
 end
@@ -598,6 +611,11 @@ local sidebar: BlockDef<SidebarState> = {
 			end
 		elseif name == "space" and value then
 			attach_space(state, cx, value)
+		elseif name == "tab" and value and state.snap then
+			local p = common.panes_of(state.snap, value)[1]
+			if p then
+				show_terminal(cx, state.link, state.pane, state.snap.machine, p.terminal_id)
+			end
 		elseif name == "menu" then
 			state.menu = not state.menu
 			state.confirm = nil

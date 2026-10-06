@@ -11,7 +11,7 @@ Herdr inside Tern, drawn by Tern itself. Herdr keeps the agents and terminals ru
 - The rail lists spaces with their git branches, then agents by priority. Click a space to show its most urgent agent (or its active tab), or click an agent.
 - The bar between the two sections has **new** (a new space), **▴ ▾** (move the agents section up or down; `[` and `]` do the same) and **menu** (new space, new tab, close space, integrations, machine, tabs mirror, refresh). Closing a space takes a second click.
 - As in Herdr, a dot on **menu** means the machine has agent integrations to install or update: an agent's command is on PATH but its Herdr integration is missing or outdated. The menu lists them; click one to run `herdr integration install` on that machine. The check runs about once a minute.
-- A tab strip above the terminal shows the space's Herdr tabs as `1 2 +`. Click a tab to show it, or `+` to create one. It is three rows tall, Tern's smallest block.
+- Under the space being shown, a row lists its Herdr tabs as `1 2 +`. Click a tab to show it, or `+` to create one. (It lives in the sidebar because a separate Tern block can't be shorter than three rows.)
 - Keys in the rail: `↑`/`↓` select, `enter` shows, `n` new space, `m` menu, `r` refresh.
 
 ## Remote machines
@@ -54,7 +54,7 @@ Herdr settings, help, resize mode, scrollback editing and worktrees aren't mappe
 - Each Tern pane runs `follow.sh`, which attaches to the terminal named in its target file (`MACHINE TERMINAL_ID`) under the plugin's data directory: `herdr terminal attach` locally, or the same command over `ssh -t`. To switch terminals, the plugin writes a new target and types `ctrl+b q`, which Herdr's direct attach always takes as detach. A failed attach is retried, because a hidden pane has no size yet and Herdr refuses a zero-sized grid.
 - `window.luau` polls `herdr workspace/tab/pane list` on every machine every 2 s. It mirrors tabs and panes, registers the key sequences and calls the Herdr CLI for each action.
 - `keymap.luau` turns Herdr's key specs into Tern sequences. For example, `prefix+shift+1..9` becomes `ctrl+x>shift+1` and `ctrl+x>!`, because terminals report shifted keys either way.
-- `host.luau` holds the sidebar and tab strip blocks, styled by `sidebar.css`.
+- `host.luau` holds the sidebar block, styled by `sidebar.css`. The `tabs` block is an older tab strip, kept so existing layouts still load.
 - `common.luau` finds the binaries, parses Herdr's JSON and holds the link helpers.
 
 Requires Herdr with `herdr terminal attach` and Tern with plugin support.

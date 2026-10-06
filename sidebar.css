@@ -141,3 +141,20 @@
 .ht .hs-dot[data-state='working'] { color: var(--warn); }
 .ht .hs-dot[data-state='done'] { color: var(--ok); }
 .ht .hs-dot[data-state='idle'], .ht .hs-dot[data-state='unknown'] { color: var(--t4); }
+
+/* The shown space's tabs inside the sidebar. */
+.hs .hs-tabs { display: flex; flex-wrap: wrap; gap: 3px; padding: 2px 8px 6px 25px; }
+.hs .hs-tab {
+  display: flex;
+  gap: 5px;
+  align-items: baseline;
+  padding: 0 8px;
+  border-radius: 4px;
+  color: var(--t3);
+  background: var(--l1);
+  cursor: pointer;
+}
+.hs .hs-tab:hover { color: var(--t1); }
+.hs .hs-tab-on { color: var(--t1); background: color-mix(in srgb, var(--accent) 35%, transparent); }
+.hs .hs-tab-new { background: none; padding: 0 4px; }
+.hs .hs-tab .hs-dot { font-size: 9px; }

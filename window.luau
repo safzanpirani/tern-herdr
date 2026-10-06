@@ -6,7 +6,6 @@ local keymap = require("./keymap")
 
 local POLL_MS = 2000
 local SIDEBAR_RATIO = 0.17
-local STRIP_ROWS = 3 -- Tern's smallest block height
 
 type Snapshot = common.Snapshot
 type Pane = common.Pane
@@ -126,7 +125,7 @@ tern.carly.context(function(_cx)
 end)
 
 ---------------------------------------------------------------------------------------------------
--- Sidebar tab: the native sidebar, the tab strip and one terminal that follows the picked pane.
+-- Sidebar tab: the native sidebar and one terminal that follows the picked pane.
 
 -- The sidebar tab open in this window: its link id, sidebar pane and terminal pane.
 local function sidebar_link(cx: WindowCx): (string?, number?, number?)
@@ -143,28 +142,6 @@ local function sidebar_link(cx: WindowCx): (string?, number?, number?)
 		end
 	end
 	return nil, nil, nil
-end
-
--- Shrinks the tab strip above `term` to STRIP_ROWS once Tern reports its size.
-local function fit_strip(strip: number)
-	tern.timer(300, function(cx)
-		tern.process.run({ common.tern, "ls", "--json" }, { timeout_ms = 5000 }, function(res, cx2)
-			local c = cx2 or cx
-			local ok, doc = pcall(tern.json.decode, res.stdout)
-			if not c or not ok or type(doc) ~= "table" then
-				return
-			end
-			for _, session in doc.sessions or {} do
-				for _, t in session.tabs or {} do
-					for _, b in t.blocks or {} do
-						if b.id == strip and type(b.rows) == "number" and b.rows > STRIP_ROWS then
-							c.layout:resize(strip, "down", STRIP_ROWS - b.rows)
-						end
-					end
-				end
-			end
-		end)
-	end)
 end
 
 local function open_sidebar(cx: WindowCx, machine: string?, terminal_id: string?)
@@ -193,12 +170,7 @@ local function open_sidebar(cx: WindowCx, machine: string?, terminal_id: string?
 		split = "right",
 		ratio = SIDEBAR_RATIO,
 		{ launch = { block = "herdr.sidebar", args = { link, machine or "local" } } },
-		{
-			split = "down",
-			ratio = 0.04,
-			{ launch = { block = "herdr.tabs", args = { link } } },
-			{ launch = { command = common.follow_command(link) } },
-		},
+		{ launch = { command = common.follow_command(link) } },
 	})
 	if not tab then
 		cx:toast("error", "Could not open the Herdr tab", err)
@@ -206,13 +178,10 @@ local function open_sidebar(cx: WindowCx, machine: string?, terminal_id: string?
 	end
 	local layout = cx.session:layout(tab)
 	local right = layout and layout.root and layout.root[2]
-	local strip, terminal = right and right[1] and right[1].pane, right and right[2] and right[2].pane
+	local terminal = right and right.pane
 	if terminal then
 		tern.kv.set("link:" .. link, terminal)
 		cx.layout:focus(terminal)
-	end
-	if strip then
-		fit_strip(strip)
 	end
 end
 
@@ -382,30 +351,25 @@ end
 local function snapshot_all(done: (WindowCx?) -> ())
 	local pending = #machines
 	local cx_seen: WindowCx? = nil
-	for _, machine in machines do
-		common.snapshot(machine, function(snap, cx)
-			snaps[machine] = snap
-			cx_seen = cx or cx_seen
-			pending -= 1
-			if pending == 0 then
-				done(cx_seen)
-			end
+	for i, machine in machines do
+		-- One timer per machine: spawning every machine's processes in one callback can pass
+		-- the window's 50 ms budget.
+		tern.timer((i - 1) * 60, function()
+			common.snapshot(machine, function(snap, cx)
+				snaps[machine] = snap
+				cx_seen = cx or cx_seen
+				pending -= 1
+				if pending == 0 then
+					done(cx_seen)
+				end
+			end)
 		end)
 	end
 end
 
-local fitted: { [number]: number } = {} -- tab strip pane -> fit attempts
-
 local function settle(cx: WindowCx?)
 	if not cx then
 		return
-	end
-	-- Sizes are bogus (80x24) until Tern shows the pane, so keep fitting strips for a while.
-	for _, p in cx.session:panes() do
-		if p.block == "herdr.tabs" and (fitted[p.pane] or 0) < 5 then
-			fitted[p.pane] = (fitted[p.pane] or 0) + 1
-			fit_strip(p.pane)
-		end
 	end
 	-- The sidebar menu asks for the mirror through kv.
 	if tern.kv.get("mirror_stop") then
