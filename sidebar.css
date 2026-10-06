@@ -1,0 +1,57 @@
+/* Herdr sidebar: spaces and agents, styled after Herdr's own rail with Tern's theme colors. */
+.sf-main[data-surface='plugin.herdr.sidebar'] .hs {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 6px 4px;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.hs .hs-head {
+  display: flex;
+  justify-content: space-between;
+  padding: 2px 8px 6px;
+  color: var(--t3);
+}
+.hs .hs-gap { margin-top: 18px; }
+.hs .hs-row {
+  display: flex;
+  flex-direction: column;
+  padding: 3px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.hs .hs-row:hover { background: var(--l1); }
+.hs .hs-row.hs-sel { box-shadow: inset 0 0 0 1px var(--l3); }
+.hs .hs-row.hs-on { background: var(--l2); }
+.hs .hs-row.hs-on .hs-name { color: var(--t1); font-weight: 600; }
+.hs .hs-line {
+  display: flex;
+  gap: 7px;
+  align-items: baseline;
+  min-width: 0;
+}
+.hs .hs-name {
+  color: var(--t2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hs .hs-n { color: var(--t4); }
+.hs .hs-sub {
+  padding-left: 17px;
+  color: var(--t4);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hs .hs-dot { color: var(--t4); flex: none; }
+.hs .hs-dot[data-state='blocked'] { color: var(--bad); }
+.hs .hs-dot[data-state='working'] { color: var(--warn); }
+.hs .hs-dot[data-state='done'] { color: var(--ok); }
+.hs .hs-err { padding: 4px 8px; color: var(--bad); }
+.sf-dock[data-surface='plugin.herdr.sidebar'] .hs-keys {
+  padding: 4px 12px;
+  color: var(--t4);
+  font-size: 11px;
+}
